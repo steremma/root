@@ -225,7 +225,11 @@ void TCuda<AFloat>::ConvLayerForward(std::vector<TCudaMatrix<AFloat>> & output,
     size_t nLocalViewPixels = params.inputDepth * params.filterHeight * params.filterWidth;
 
    TCudaMatrix<AFloat> inputPrime(nLocalViews, nLocalViewPixels);
+   int numDevices = 0;
+   cudaGetDeviceCount(&numDevices);
    for(size_t event = 0; event < input.size(); event++) {
+      int device = event % numDevices;
+      cudaSetDevice(device);
       Im2col(inputPrime, input[event], params.inputHeight, params.inputWidth, params.filterHeight, params.filterWidth,
              params.strideRows, params.strideCols, params.paddingHeight, params.paddingWidth);
 
@@ -310,7 +314,11 @@ void TCuda<AFloat>::CalculateConvActivationGradients(
 
     // Convolution.
     TCudaMatrix<AFloat> dfPrime(tempNLocalViews, tempNLocalViewPixels);
+    int numDevices = 0;
+    cudaGetDeviceCount(&numDevices);
     for(size_t event = 0; event < df.size(); event++) {
+        int device = event % numDevices;
+        cudaSetDevice(device);
         Im2col(dfPrime, df[event], height, width, filterHeight, filterWidth, tempStrideRows, tempStrideCols,
                tempZeroPaddingHeight, tempZeroPaddingWidth);
 
@@ -355,7 +363,11 @@ void TCuda<AFloat>::CalculateConvWeightGradients(TCudaMatrix<AFloat> & weightGra
 
     // Convolution.
     TCudaMatrix<AFloat> activationsPrime(nLocalViews, nLocalViewPixels);
+    int numDevices = 0;
+    cudaGetDeviceCount(&numDevices);
     for(size_t event = 0; event < df.size(); event++) {
+        int device = event % numDevices;
+        cudaSetDevice(device);
         Im2col(activationsPrime, activationsBackward[event], inputHeight, inputWidth, filterHeight, filterWidth,
                tempStrideRows, tempStrideCols, tempZeroPaddingHeight, tempZeroPaddingWidth);
 
@@ -397,7 +409,11 @@ void TCuda<AFloat>::CalculateConvBiasGradients(TCudaMatrix<AFloat> & biasGradien
 {
     biasGradients.Zero();
     TCudaMatrix<AFloat> temp(biasGradients.GetNrows(), biasGradients.GetNcols());
+    int numDevices = 0;
+    cudaGetDeviceCount(&numDevices);
     for (size_t event = 0; event < batchSize; event++) {
+        int device = event % numDevices;
+        cudaSetDevice(device);
         TCuda<AFloat>::SumRows(temp, df[event]);
         TCuda<AFloat>::ScaleAdd(biasGradients, temp);
     }
