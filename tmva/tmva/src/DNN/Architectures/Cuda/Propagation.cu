@@ -219,10 +219,10 @@ void TCuda<AFloat>::ConvLayerForward(std::vector<TCudaMatrix<AFloat>> & output,
                                      const TCudaMatrix<AFloat> &weights, const TCudaMatrix<AFloat> & biases,
                                      const DNN::CNN::TConvParams & params, EActivationFunction activFunc)
 {
-    size_t height = calculateDimension(params.inputHeight, params.filterHeight, params.paddingHeight, params.strideRows);
-    size_t width = calculateDimension(params.inputWidth, params.filterWidth, params.paddingWidth, params.strideCols);
-    size_t nLocalViews = height * width;
-    size_t nLocalViewPixels = params.inputDepth * params.filterHeight * params.filterWidth;
+   size_t height = calculateDimension(params.inputHeight, params.filterHeight, params.paddingHeight, params.strideRows);
+   size_t width = calculateDimension(params.inputWidth, params.filterWidth, params.paddingWidth, params.strideCols);
+   size_t nLocalViews = height * width;
+   size_t nLocalViewPixels = params.inputDepth * params.filterHeight * params.filterWidth;
 
    TCudaMatrix<AFloat> inputPrime(nLocalViews, nLocalViewPixels);
    int numDevices = 0;
@@ -233,7 +233,7 @@ void TCuda<AFloat>::ConvLayerForward(std::vector<TCudaMatrix<AFloat>> & output,
       Im2col(inputPrime, input[event], params.inputHeight, params.inputWidth, params.filterHeight, params.filterWidth,
              params.strideRows, params.strideCols, params.paddingHeight, params.paddingWidth);
 
-      MultiplyTranspose(output[event], weights, inputPrime);
+      MultiplyTranspose(output[event], weights, inputPrime[event]);
       AddConvBiases(output[event], biases);
 
       evaluateDerivative<TCuda<AFloat>>(derivatives[event], activFunc, output[event]);
@@ -322,7 +322,7 @@ void TCuda<AFloat>::CalculateConvActivationGradients(
         Im2col(dfPrime, df[event], height, width, filterHeight, filterWidth, tempStrideRows, tempStrideCols,
                tempZeroPaddingHeight, tempZeroPaddingWidth);
 
-        MultiplyTranspose(activationGradientsBackward[event], rotWeights, dfPrime);
+        MultiplyTranspose(activationGradientsBackward[event], rotWeights, dfPrime[event]);
     }
 }
 
@@ -356,8 +356,10 @@ void TCuda<AFloat>::CalculateConvWeightGradients(TCudaMatrix<AFloat> & weightGra
     const size_t tempZeroPaddingHeight = (height - inputHeight + filterHeight - 1) / 2;
     const size_t tempZeroPaddingWidth = (width - inputWidth + filterWidth - 1) / 2;
 
+    std::vector<TCudaMatrix<AFloat>> activationsPrime;
     std::vector< TCudaMatrix<AFloat> > vres;
     for (size_t i = 0; i < batchSize; i++) {
+        activationsPrime.emplace_back(nLocalViews, nLocalViewPixels);
         vres.emplace_back(depth, nLocalViewPixels);
     }
 
@@ -371,7 +373,7 @@ void TCuda<AFloat>::CalculateConvWeightGradients(TCudaMatrix<AFloat> & weightGra
         Im2col(activationsPrime, activationsBackward[event], inputHeight, inputWidth, filterHeight, filterWidth,
                tempStrideRows, tempStrideCols, tempZeroPaddingHeight, tempZeroPaddingWidth);
 
-        Multiply(vres[event], df[event], activationsPrime);
+        Multiply(vres[event], df[event], activationsPrime[event]);
     }
 
     dim3 blockDims = TDevice::BlockDims2D();
