@@ -233,7 +233,7 @@ void TCuda<AFloat>::ConvLayerForward(std::vector<TCudaMatrix<AFloat>> & output,
       Im2col(inputPrime, input[event], params.inputHeight, params.inputWidth, params.filterHeight, params.filterWidth,
              params.strideRows, params.strideCols, params.paddingHeight, params.paddingWidth);
 
-      MultiplyTranspose(output[event], weights, inputPrime[event]);
+      MultiplyTranspose(output[event], weights, inputPrime);
       AddConvBiases(output[event], biases);
 
       evaluateDerivative<TCuda<AFloat>>(derivatives[event], activFunc, output[event]);
@@ -322,7 +322,7 @@ void TCuda<AFloat>::CalculateConvActivationGradients(
         Im2col(dfPrime, df[event], height, width, filterHeight, filterWidth, tempStrideRows, tempStrideCols,
                tempZeroPaddingHeight, tempZeroPaddingWidth);
 
-        MultiplyTranspose(activationGradientsBackward[event], rotWeights, dfPrime[event]);
+        MultiplyTranspose(activationGradientsBackward[event], rotWeights, dfPrime);
     }
 }
 
@@ -356,10 +356,8 @@ void TCuda<AFloat>::CalculateConvWeightGradients(TCudaMatrix<AFloat> & weightGra
     const size_t tempZeroPaddingHeight = (height - inputHeight + filterHeight - 1) / 2;
     const size_t tempZeroPaddingWidth = (width - inputWidth + filterWidth - 1) / 2;
 
-    std::vector<TCudaMatrix<AFloat>> activationsPrime;
     std::vector< TCudaMatrix<AFloat> > vres;
     for (size_t i = 0; i < batchSize; i++) {
-        activationsPrime.emplace_back(nLocalViews, nLocalViewPixels);
         vres.emplace_back(depth, nLocalViewPixels);
     }
 
@@ -373,7 +371,7 @@ void TCuda<AFloat>::CalculateConvWeightGradients(TCudaMatrix<AFloat> & weightGra
         Im2col(activationsPrime, activationsBackward[event], inputHeight, inputWidth, filterHeight, filterWidth,
                tempStrideRows, tempStrideCols, tempZeroPaddingHeight, tempZeroPaddingWidth);
 
-        Multiply(vres[event], df[event], activationsPrime[event]);
+        Multiply(vres[event], df[event], activationsPrime);
     }
 
     dim3 blockDims = TDevice::BlockDims2D();
