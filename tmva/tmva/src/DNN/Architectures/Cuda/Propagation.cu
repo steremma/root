@@ -213,6 +213,26 @@ void TCuda<AFloat>::RotateWeights(TCudaMatrix<AFloat> &A,
 }
 
 template <typename AFloat>
+void transfer(const TCudaMatrix<AFloat> &srcMatrix, std::vector<TCudaMatrix<AFloat>> &dstVector,
+              int srcDevice, int dstDevice, int index = -1)
+{
+    if (dstDevice == srcDevice) {
+        // This matrix must remain on the same GPU - make a shallow copy.
+        if(index < 0) dstVector.push_back(srcMatrix);
+        else dstVector[index] = srcMatrix;
+    }
+
+    // Copy from `src` to host.
+    cudaSetDevice(srcDevice);
+    TMatrixT<AFloat> hostMatrix(srcMatrix);
+
+    // Copy from host to `dst`.
+    cudaSetDevice(dstDevice);
+    if(index < 0) dstVector.push_back(TCudaMatrix<AFloat>(hostMatrix));
+    else dstVector[index] = TCudaMatrix<AFloat>(hostMatrix);
+}
+
+template <typename AFloat>
 void TCuda<AFloat>::ConvLayerForward(std::vector<TCudaMatrix<AFloat>> & output,
                                      std::vector<TCudaMatrix<AFloat>> & derivatives,
                                      const std::vector<TCudaMatrix<AFloat>> &input,
@@ -224,21 +244,65 @@ void TCuda<AFloat>::ConvLayerForward(std::vector<TCudaMatrix<AFloat>> & output,
    size_t nLocalViews = height * width;
    size_t nLocalViewPixels = params.inputDepth * params.filterHeight * params.filterWidth;
 
-   TCudaMatrix<AFloat> inputPrime(nLocalViews, nLocalViewPixels);
    int numDevices = 0;
    cudaGetDeviceCount(&numDevices);
+
+   /* Dark Magic begins: Distribute the `CudaMatrix` objects between available GPUs.
+    *
+    * This is really bad performance-wise because it requires a ton of unnecessary memory copies.
+    * I write this as a proof of concept, if it works I can later distribute the allocations themselves.
+    * I am assuming that at the beginning all matrices are residing on GPU 0.
+    */
+
+   std::vector<TCudaMatrix<AFloat>> distributedInput;
+   std::vector<TCudaMatrix<AFloat>> distributedOutput;
+   std::vector<TCudaMatrix<AFloat>> distributedDerivatives;
+   std::vector<TCudaMatrix<AFloat>> distributedWeights;
+   std::vector<TCudaMatrix<AFloat>> distributedBiases;
+
+   // Distribute the events of the batch to different GPUs.
+   for(int event = 0; event < input.size(); event++) {
+       int dstDevice = event % numDevices;
+       transfer(input[event], distributedInput, 0, dstDevice);
+       transfer(output[event], distributedOutput, 0, dstDevice);
+       transfer(derivatives[event], distributedDerivatives, 0, dstDevice);
+   }
+
+   // Copy the weights and bias to every GPU.
+   for(size_t device = 0; device < (size_t)numDevices; device++) {
+      transfer(weights, distributedWeights, 0, device);
+      transfer(biases, distributedBiases, 0, device);
+   }
+
+   std::vector<TCudaMatrix<AFloat>> inputPrime;
+   for(int device = 0; device < numDevices; device++) {
+      cudaSetDevice(device);
+      inputPrime.emplace_back(nLocalViews, nLocalViewPixels);
+   }
+
+   /*
+    * Dark Magic ends.
+    */
+
    for(size_t event = 0; event < input.size(); event++) {
       int device = event % numDevices;
       cudaSetDevice(device);
-      Im2col(inputPrime, input[event], params.inputHeight, params.inputWidth, params.filterHeight, params.filterWidth,
+      Im2col(inputPrime[device], distributedInput[event], params.inputHeight, params.inputWidth, params.filterHeight, params.filterWidth,
              params.strideRows, params.strideCols, params.paddingHeight, params.paddingWidth);
 
-      MultiplyTranspose(output[event], weights, inputPrime);
-      AddConvBiases(output[event], biases);
+      MultiplyTranspose(distributedOutput[event], distributedWeights[device], inputPrime[device]);
+      AddConvBiases(distributedOutput[event], distributedBiases[device]);
 
-      evaluateDerivative<TCuda<AFloat>>(derivatives[event], activFunc, output[event]);
-      evaluate<TCuda<AFloat>>(output[event], activFunc);
+      evaluateDerivative<TCuda<AFloat>>(distributedDerivatives[event], activFunc, distributedOutput[event]);
+      evaluate<TCuda<AFloat>>(distributedOutput[event], activFunc);
   }
+
+  // Now gather everything back to GPU 0.
+   for(int event = 0; event < input.size(); event++) {
+      int srcDevice = event % numDevices;
+      transfer(distributedOutput[event], output, srcDevice, 0, event);
+      transfer(distributedDerivatives[event], derivatives, srcDevice, 0, event);
+   }
 }
 
 //____________________________________________________________________________
